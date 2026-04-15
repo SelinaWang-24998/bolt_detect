@@ -8,7 +8,7 @@
 import gc
 import utime as time
 
-from libs.PipeLine import PipeLine
+from libs.PipeLine_http import PipeLine
 from bolt_detector import BoltDetector
 
 from rtsmart_web_adapter import RTWebAdapter
@@ -46,78 +46,14 @@ def save_detection_records(results, detection_manager, save_img, threshold):
         print("[检测管理] 保存检测记录失败: {}".format(e))
 
 def get_stream_image(pl, detection_enabled=False, overlay_osd=True):
-    """
-    优先从 CAM_CHN_ID_0 抓取用于 MJPEG 推流的图像。
-
-    说明：
-    - `pl.cur_frame` 来自 PipeLine 的 CHN2/RGB888P 推理通道，个别固件下直接用于
-      Web 推流会出现整体发黑或只有极弱亮度变化的问题。
-    - 参考项目的稳定做法是推流时单独从显示/视频通道再抓一张图，再按需叠加 OSD。
-    """
     try:
-        img = getattr(pl, "cur_frame", None)
-#        from media.sensor import CAM_CHN_ID_0, CAM_CHN_ID_2
-
-#        img = None
-
-#        try:
-
-#            img = pl.sensor.snapshot(chn=CAM_CHN_ID_0)
-#        except Exception:
-#            img = None
-
-#        if img is None:
-#            img = getattr(pl, "cur_frame", None)
-
-#        if img is None:
-#            try:
-#                img = pl.sensor.snapshot(chn=CAM_CHN_ID_2)
-#            except Exception:
-#                img = None
+        if hasattr(pl, "get_stream_frame"):
+            img = pl.get_stream_frame()
+        else:
+            img = getattr(pl, "cur_frame", None)
 
         if img is None:
             return None
-
-        if hasattr(img, "to_rgb888"):
-            try:
-                converted = img.to_rgb888()
-                if converted is not None:
-                    img = converted
-            except Exception:
-                pass
-
-        if overlay_osd and detection_enabled and getattr(pl, "osd_img", None) is not None:
-            try:
-                img.draw_image(pl.osd_img, 0, 0, alpha=256)
-            except Exception:
-                pass
-        return img
-    except Exception as e:
-        print("[HTTP] 获取 stream 图像失败: {}".format(e))
-        return None
-
-def get_stream_image1(pl, detection_enabled=False, overlay_osd=True):
-    """
-    获取用于 HTTP 推流的图像。
-    优先使用 CHN2（RGB888P），避免 CHN0(YUV420) 直接压缩导致的偏色/花屏。
-    """
-    try:
-        from media.sensor import CAM_CHN_ID_0, CAM_CHN_ID_2
-
-        # CHN2 在 PipeLine 中配置为 RGB_888_PLANAR，更适合 JPEG 推流
-        try:
-            img = pl.sensor.snapshot(chn=CAM_CHN_ID_2)
-        except Exception:
-            img = pl.sensor.snapshot(chn=CAM_CHN_ID_0)
-
-        # 显式转换为 RGB888，规避底层像素格式差异导致的颜色异常
-        if hasattr(img, "to_rgb888"):
-            try:
-                converted = img.to_rgb888()
-                if converted is not None:
-                    img = converted
-            except Exception:
-                pass
 
         if overlay_osd and detection_enabled and getattr(pl, "osd_img", None) is not None:
             try:
