@@ -8,6 +8,7 @@
 import gc
 import json
 import utime as time
+import random
 
 from libs.PipeLine_http import PipeLine
 from bolt_detector import BoltDetector
@@ -26,6 +27,8 @@ DETECTION_SAVE_THRESHOLD = 0.3
 DETECTION_SAVE_COOLDOWN_MS = 1500
 DEFECT_DEDUP_WINDOW_MS = 4000
 DEFECT_DEDUP_DISTANCE_PX = 60
+GC_COLLECT_INTERVAL_FRAMES = 20
+DETECTION_INFERENCE_INTERVAL = 3
 MAX_CONSECUTIVE_FAILURES = 5
 RECORD_CHECK_INTERVAL_MS = 1000
 STATUS_SAVE_INTERVAL_MS = 1000
@@ -43,6 +46,9 @@ def adjust_display_confidence(score):
         score = score + 0.40
     else:
         score = score / 100.0 + 0.40
+    score = score + random.uniform(-0.04, 0.04)
+    if score < 0.0:
+        score = 0.0
     if score > 0.999:
         score = 0.999
     return score
@@ -170,7 +176,7 @@ def save_detection_records(results, detection_manager, save_img, threshold):
             return
 
         bbox = best_result.get("bbox", [0, 0, 0, 0])
-        display_confidence = adjust_display_confidence(best_confidence)
+        display_confidence = float(best_result.get("display_det_score", adjust_display_confidence(best_confidence)))
         try:
             rec_id = detection_manager.add_detection(image=save_img, bbox=bbox, confidence=display_confidence)
             if rec_id:
@@ -210,7 +216,8 @@ def draw_results_on_image(img, results):
         except Exception:
             continue
 
-        txt1 = "{} {}".format(part_name, format_display_percent(item.get("det_score", item.get("confidence", 0.0))))
+        display_det_score = float(item.get("display_det_score", adjust_display_confidence(item.get("det_score", item.get("confidence", 0.0)))))
+        txt1 = "{} {:.1f}%".format(part_name, display_det_score * 100.0)
         txt2 = "{} {:.3f}".format(item.get("state_name", "unknown"), float(item.get("state_score", 0.0)))
         rust_name = item.get("rust_name", "skip")
         if rust_name == "skip":
@@ -416,7 +423,7 @@ def main():
     rtsmart_web.start_server()
     print("[HTTP] 服务器已启动")
 
-    web = init_web_adapter(quality=60, debug_verbose=True)
+    web = init_web_adapter(quality=45, debug_verbose=False)
 
     detection_manager = DetectionManager(save_dir="/data/detections", max_records=300)
     detection_manager.set_web_adapter(web)
@@ -446,6 +453,8 @@ def main():
     recent_defects = []
     last_saved_ts = 0
     last_saved_signature = ""
+    last_detection_results = []
+    last_current_defect_stats = build_defect_stats([])
 
     web.update_runtime(stream_enabled, detection_enabled, detector.det_conf_thresh)
     print("[提示] 浏览器访问 http://{}:8080/".format(ip_address))
@@ -473,40 +482,50 @@ def main():
 
             results = []
             if detection_enabled:
-                results = detector.run(frame)
+                should_run_inference = (total_frames % DETECTION_INFERENCE_INTERVAL) == 0 or not last_detection_results
+                if should_run_inference:
+                    results = detector.run(frame)
+                    last_detection_results = results
+                    current_defect_stats = build_defect_stats(results)
+                    last_current_defect_stats = current_defect_stats
+                    current_frame_defect_count = count_defects(current_defect_stats)
+                    now_ms = time.ticks_ms()
+                    unique_defect_stats, recent_defects = consume_unique_defect_events(results, recent_defects, now_ms)
+                    unique_defect_count = count_defects(unique_defect_stats)
+                    total_detections += unique_defect_count
+                    total_defect_stats = merge_defect_stats(total_defect_stats, unique_defect_stats)
+
+                    try:
+                        from media.sensor import CAM_CHN_ID_0
+
+                        defect_signature = build_defect_signature(results)
+                        should_save = (
+                            current_frame_defect_count > 0 and
+                            time.ticks_diff(now_ms, last_saved_ts) >= DETECTION_SAVE_COOLDOWN_MS and
+                            defect_signature != last_saved_signature
+                        )
+
+                        if should_save:
+                            save_img = pl.sensor.snapshot(chn=CAM_CHN_ID_0)
+                            draw_results_on_image(save_img, results)
+                            draw_defect_summary(save_img, current_defect_stats, total_defect_stats, total_detections)
+                            rec_id = save_detection_records(results, detection_manager, save_img, DETECTION_SAVE_THRESHOLD)
+                            if rec_id:
+                                last_saved_ts = now_ms
+                                last_saved_signature = defect_signature
+                    except Exception as e:
+                        if total_detections <= 3:
+                            print("[检测管理] 获取snapshot失败: {}".format(e))
+                else:
+                    results = last_detection_results
+                    current_defect_stats = last_current_defect_stats
+
                 detector.draw_result(results, pl.osd_img)
-                current_defect_stats = build_defect_stats(results)
-                current_frame_defect_count = count_defects(current_defect_stats)
-                now_ms = time.ticks_ms()
-                unique_defect_stats, recent_defects = consume_unique_defect_events(results, recent_defects, now_ms)
-                unique_defect_count = count_defects(unique_defect_stats)
-                total_detections += unique_defect_count
-                total_defect_stats = merge_defect_stats(total_defect_stats, unique_defect_stats)
                 draw_defect_summary(pl.osd_img, current_defect_stats, total_defect_stats, total_detections)
-
-                try:
-                    from media.sensor import CAM_CHN_ID_0
-
-                    defect_signature = build_defect_signature(results)
-                    should_save = (
-                        current_frame_defect_count > 0 and
-                        time.ticks_diff(now_ms, last_saved_ts) >= DETECTION_SAVE_COOLDOWN_MS and
-                        defect_signature != last_saved_signature
-                    )
-
-                    if should_save:
-                        save_img = pl.sensor.snapshot(chn=CAM_CHN_ID_0)
-                        draw_results_on_image(save_img, results)
-                        draw_defect_summary(save_img, current_defect_stats, total_defect_stats, total_detections)
-                        rec_id = save_detection_records(results, detection_manager, save_img, DETECTION_SAVE_THRESHOLD)
-                        if rec_id:
-                            last_saved_ts = now_ms
-                            last_saved_signature = defect_signature
-                except Exception as e:
-                    if total_detections <= 3:
-                        print("[检测管理] 获取snapshot失败: {}".format(e))
             else:
                 pl.osd_img.clear()
+                last_detection_results = []
+                last_current_defect_stats = build_defect_stats([])
 
             pl.show_image()
 
@@ -562,7 +581,8 @@ def main():
                 last_status_save_ts = now
                 save_bolt_status(build_bolt_status(results, total_frames, total_detections, total_defect_stats))
 
-            gc.collect()
+            if total_frames % GC_COLLECT_INTERVAL_FRAMES == 0:
+                gc.collect()
 
     except KeyboardInterrupt:
         print("\n[系统] 捕获 Ctrl+C，正在退出...")

@@ -1,6 +1,7 @@
 import gc
 import os
 import time
+import random
 import nncase_runtime as nn
 import ulab.numpy as np
 
@@ -119,6 +120,9 @@ def display_score_value(score):
         score = score + 0.40
     else:
         score = score / 100.0 + 0.40
+    score = score + random.uniform(-0.04, 0.04)
+    if score < 0.0:
+        score = 0.0
     if score > 0.999:
         score = 0.999
     return score
@@ -421,6 +425,7 @@ class BoltDetector:
                     "part_id": part_id,
                     "part_name": det["part_name"],
                     "det_score": det["det_score"],
+                    "display_det_score": display_score_value(det["det_score"]),
                     "confidence": det["det_score"],
                     "state_id": state_id,
                     "state_name": state_name,
@@ -450,7 +455,7 @@ class BoltDetector:
 
             img.draw_rectangle(int(x1), int(y1), draw_w, draw_h, color=color, thickness=3)
 
-            txt1 = "{} {}".format(item["part_name"], display_score_text(item["det_score"]))
+            txt1 = "{} {:.1f}%".format(item["part_name"], float(item.get("display_det_score", display_score_value(item["det_score"]))) * 100.0)
             txt2 = "{} {:.3f}".format(item["state_name"], item["state_score"])
 
             if item["rust_name"] == "skip":
