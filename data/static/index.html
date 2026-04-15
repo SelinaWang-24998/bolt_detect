@@ -124,6 +124,12 @@
         grid-row: span 2;
       }
 
+      .video-bottom-stack {
+        display: grid;
+        gap: 16px;
+        margin-top: 16px;
+      }
+
       .video-container {
         position: relative;
         background: #000;
@@ -297,6 +303,63 @@
         gap: 10px;
       }
 
+      .defect-group {
+        display: grid;
+        gap: 10px;
+      }
+
+      .defect-group.nut-group,
+      .defect-group.head-group {
+        grid-template-columns: repeat(3, 1fr);
+      }
+
+      .defect-group.rust-group {
+        grid-template-columns: repeat(2, 1fr);
+      }
+
+      .defect-group-title {
+        color: var(--muted);
+        font-size: 0.85em;
+        letter-spacing: 0.5px;
+        margin-bottom: 2px;
+      }
+
+      .defect-summary {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 10px;
+        margin-bottom: 12px;
+      }
+
+      .defect-summary-card {
+        background: #e5ebf2;
+        border: 2px solid #96a4b4;
+        border-radius: 2px;
+        padding: 12px 10px;
+        text-align: center;
+      }
+
+      .defect-summary-value {
+        font-size: 1.6em;
+        font-weight: 700;
+        color: var(--accent);
+      }
+
+      .defect-summary-label {
+        color: var(--muted);
+        font-size: 0.85em;
+      }
+
+      .defect-current-line {
+        margin-bottom: 12px;
+        padding: 10px 12px;
+        background: #e5ebf2;
+        border: 2px solid #96a4b4;
+        border-radius: 2px;
+        color: var(--muted);
+        font-size: 0.9em;
+      }
+
       .defect-item {
         display: flex;
         justify-content: space-between;
@@ -465,6 +528,12 @@
         border: 1px solid #223042;
       }
 
+      body.theme-night .defect-summary-card,
+      body.theme-night .defect-current-line {
+        background: #0f141b;
+        border: 1px solid #223042;
+      }
+
       body.theme-night .detection-item {
         border-bottom: 1px solid #223042;
       }
@@ -540,6 +609,72 @@
               step="5"
             />
           </div>
+
+          <div class="video-bottom-stack">
+            <div class="panel" style="padding: 16px">
+              <h2>四模型缺陷统计</h2>
+              <div class="defect-summary">
+                <div class="defect-summary-card">
+                  <div class="defect-summary-value" id="totalDefectCount">0</div>
+                  <div class="defect-summary-label">累计缺陷</div>
+                </div>
+                <div class="defect-summary-card">
+                  <div class="defect-summary-value" id="currentDetectionCount">0</div>
+                  <div class="defect-summary-label">当前帧目标</div>
+                </div>
+                <div class="defect-summary-card">
+                  <div class="defect-summary-value" id="currentDefectCount">0</div>
+                  <div class="defect-summary-label">当前帧缺陷</div>
+                </div>
+              </div>
+              <div class="defect-current-line" id="currentDefectStatsText">
+                当前帧未发现缺陷
+              </div>
+              <div id="defectStatsList" class="defect-stats-list">
+                <div class="defect-group-title">螺母状态</div>
+                <div class="defect-group nut-group">
+                  <div class="defect-item">
+                    <span class="defect-name">螺母松动</span>
+                    <span class="defect-count" id="defectNutLoose">0</span>
+                  </div>
+                  <div class="defect-item">
+                    <span class="defect-name">螺母缺失</span>
+                    <span class="defect-count" id="defectNutMissing">0</span>
+                  </div>
+                  <div class="defect-item">
+                    <span class="defect-name">螺母正常</span>
+                    <span class="defect-count" id="defectNutNormal">0</span>
+                  </div>
+                </div>
+                <div class="defect-group-title">螺栓头状态</div>
+                <div class="defect-group head-group">
+                  <div class="defect-item">
+                    <span class="defect-name">螺栓头松动</span>
+                    <span class="defect-count" id="defectHeadLoose">0</span>
+                  </div>
+                  <div class="defect-item">
+                    <span class="defect-name">螺栓头缺失</span>
+                    <span class="defect-count" id="defectHeadMissing">0</span>
+                  </div>
+                  <div class="defect-item">
+                    <span class="defect-name">螺栓头正常</span>
+                    <span class="defect-count" id="defectHeadNormal">0</span>
+                  </div>
+                </div>
+                <div class="defect-group-title">锈蚀状态</div>
+                <div class="defect-group rust-group">
+                  <div class="defect-item">
+                    <span class="defect-name">锈蚀</span>
+                    <span class="defect-count" id="defectRust">0</span>
+                  </div>
+                  <div class="defect-item">
+                    <span class="defect-name">未锈蚀</span>
+                    <span class="defect-count" id="defectNoRust">0</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
 
         <div class="right-column">
@@ -572,21 +707,6 @@
               <div class="stat-item">
                 <div class="stat-value" id="statRecords">0</div>
                 <div class="stat-label">保存记录</div>
-              </div>
-            </div>
-          </div>
-
-          <!-- 缺陷统计 -->
-          <div class="panel">
-            <h2>各类缺陷数量</h2>
-            <div id="defectStatsList" class="defect-stats-list">
-              <div class="defect-item">
-                <span class="defect-name">松动</span>
-                <span class="defect-count" id="defectLoose">0</span>
-              </div>
-              <div class="defect-item">
-                <span class="defect-name">锈蚀</span>
-                <span class="defect-count" id="defectRust">0</span>
               </div>
             </div>
           </div>

@@ -33,6 +33,7 @@ MAX_CONSECUTIVE_FAILURES = 5
 RECORD_CHECK_INTERVAL_MS = 1000
 STATUS_SAVE_INTERVAL_MS = 1000
 BOLT_STATUS_PATH = "/data/bolt_status.json"
+BOLT_STATUS_MIRROR_PATH = "/data/static/bolt_status.json"
 
 
 def adjust_display_confidence(score):
@@ -363,11 +364,25 @@ def build_bolt_status(results, total_frames, total_detections, total_defect_stat
 
 
 def save_bolt_status(status):
+    payload = json.dumps(status)
+    saved = False
+
     try:
         with open(BOLT_STATUS_PATH, "w") as f:
-            f.write(json.dumps(status))
+            f.write(payload)
+        saved = True
     except Exception as e:
         print("[状态] 保存 bolt_status.json 失败: {}".format(e))
+
+    try:
+        with open(BOLT_STATUS_MIRROR_PATH, "w") as f:
+            f.write(payload)
+        saved = True
+    except Exception:
+        pass
+
+    if not saved:
+        print("[状态] 未能写入任何 bolt_status.json 镜像文件")
 
 def get_stream_image(pl, detection_enabled=False, overlay_osd=True):
     try:

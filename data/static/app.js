@@ -8,8 +8,47 @@ class EndoscopeApp {
         this.detectionEnabled = false;
         this.lastStatusResult = null;  // 保存最后一次状态查询结果
         this._cachedRecords = [];
+        this.boltStatus = null;
 
         this.init();
+    }
+
+    defaultBoltSummary() {
+        return {
+            total_detections: 0,
+            total_defects: 0,
+            total_frames: 0,
+            current_frame_detections: 0,
+            current_frame_defects: 0
+        };
+    }
+
+    defaultRuntimeState() {
+        return {
+            camera: {
+                running: false,
+                desired: false
+            },
+            detection: {
+                enabled: false,
+                desired: false
+            },
+            confidence: {
+                actual: 0.5,
+                desired: 0.5
+            },
+            yolo_stats: {
+                fps: 0,
+                total_detections: 0,
+                total_frames: 0
+            },
+            detection_stats: {
+                total_count: 0
+            },
+            defect_stats: this.defaultDefectCounts(),
+            current_defect_stats: this.defaultDefectCounts(),
+            bolt_summary: this.defaultBoltSummary()
+        };
     }
 
     init() {
@@ -49,7 +88,7 @@ class EndoscopeApp {
 
         // 加载初始数据
         this.loadRecords();
-        this.renderDefectStats({ '松动': 0, '锈蚀': 0 });
+        this.renderDefectStats(this.defaultDefectCounts(), this.defaultDefectCounts(), null);
         this.updateDetectionToggle();
         this.initTheme();
 
@@ -112,6 +151,115 @@ class EndoscopeApp {
             console.error('API调用失败:', error);
             return { success: false, error: error.message };
         }
+    }
+
+    async fetchBoltStatus() {
+        const candidates = [
+            './bolt_status.json',
+            'bolt_status.json',
+            './static/bolt_status.json',
+            '/bolt_status.json',
+            '/static/bolt_status.json'
+        ];
+
+        for (const path of candidates) {
+            try {
+                const response = await fetch(`${path}?t=${Date.now()}`);
+                if (!response.ok) {
+                    continue;
+                }
+                const text = await response.text();
+                const parsed = JSON.parse(text);
+                this.boltStatus = parsed;
+                return parsed;
+            } catch (error) {
+                // try next path
+            }
+        }
+        return this.boltStatus;
+    }
+
+    mergeBoltStatus(data, boltStatus) {
+        const merged = Object.assign({}, data || {});
+        if (!boltStatus || typeof boltStatus !== 'object') {
+            return merged;
+        }
+        if (boltStatus.defect_stats) {
+            merged.defect_stats = boltStatus.defect_stats;
+        }
+        if (boltStatus.current_defect_stats) {
+            merged.current_defect_stats = boltStatus.current_defect_stats;
+        }
+        if (boltStatus.bolt_summary) {
+            merged.bolt_summary = boltStatus.bolt_summary;
+        }
+        return merged;
+    }
+
+    normalizeBoolean(value, fallback = false) {
+        if (value === true || value === false) return value;
+        if (value === 1 || value === '1') return true;
+        if (value === 0 || value === '0') return false;
+        if (value === 'true') return true;
+        if (value === 'false') return false;
+        return fallback;
+    }
+
+    normalizeNumber(value, fallback = 0) {
+        const num = Number(value);
+        return Number.isFinite(num) ? num : fallback;
+    }
+
+    normalizeApiData(apiData, boltStatus = null) {
+        const merged = this.mergeBoltStatus(apiData, boltStatus);
+        const defaults = this.defaultRuntimeState();
+
+        const camera = Object.assign({}, defaults.camera, merged.camera || {});
+        camera.running = this.normalizeBoolean(camera.running, this.normalizeBoolean(camera.actual, false));
+        camera.desired = this.normalizeBoolean(camera.desired, camera.running);
+
+        const detection = Object.assign({}, defaults.detection, merged.detection || {});
+        detection.enabled = this.normalizeBoolean(detection.enabled, this.normalizeBoolean(detection.actual, false));
+        detection.desired = this.normalizeBoolean(detection.desired, detection.enabled);
+
+        const confidence = Object.assign({}, defaults.confidence, merged.confidence || {});
+        confidence.actual = this.normalizeNumber(confidence.actual, this.normalizeNumber(confidence.value, defaults.confidence.actual));
+        confidence.desired = this.normalizeNumber(confidence.desired, confidence.actual);
+
+        const boltSummary = Object.assign({}, defaults.bolt_summary, merged.bolt_summary || {});
+        boltSummary.total_detections = this.toCountNumber(boltSummary.total_detections);
+        boltSummary.total_defects = this.toCountNumber(boltSummary.total_defects);
+        boltSummary.total_frames = this.toCountNumber(boltSummary.total_frames);
+        boltSummary.current_frame_detections = this.toCountNumber(boltSummary.current_frame_detections);
+        boltSummary.current_frame_defects = this.toCountNumber(boltSummary.current_frame_defects);
+
+        const yoloStats = Object.assign({}, defaults.yolo_stats, merged.yolo_stats || {});
+        yoloStats.fps = this.normalizeNumber(
+            yoloStats.fps,
+            this.normalizeNumber(merged.fps, defaults.yolo_stats.fps)
+        );
+        yoloStats.total_detections = this.toCountNumber(
+            yoloStats.total_detections || boltSummary.total_detections
+        );
+        yoloStats.total_frames = this.toCountNumber(
+            yoloStats.total_frames || boltSummary.total_frames
+        );
+
+        const detectionStats = Object.assign({}, defaults.detection_stats, merged.detection_stats || {});
+        detectionStats.total_count = this.toCountNumber(
+            detectionStats.total_count || merged.total_records || 0
+        );
+
+        return {
+            camera,
+            detection,
+            confidence,
+            yolo_stats: yoloStats,
+            detection_stats: detectionStats,
+            defect_stats: this.normalizeCountMap(merged.defect_stats || {}),
+            current_defect_stats: this.normalizeCountMap(merged.current_defect_stats || {}),
+            bolt_summary: boltSummary
+        };
     }
 
     // 启动摄像头
@@ -328,19 +476,15 @@ class EndoscopeApp {
     async loadInitialState() {
         try {
             const result = await this.apiCall('/api/status');
+            const boltStatus = await this.fetchBoltStatus();
             console.log('[App] 加载初始状态，服务器返回:', result);
 
             if (result.success && result.data) {
-                const data = result.data;
+                const data = this.normalizeApiData(result.data, boltStatus);
 
                 // ⭐ 关键修复：恢复摄像头状态 - 使用actual状态（这是Python层同步的真实状态）
                 // 优先使用actual状态，如果没有则使用desired状态
-                const cameraRunning = data.camera && (
-                    data.camera.running === true ||
-                    data.camera.running === 'true' ||
-                    data.camera.running === 1 ||
-                    data.camera.running === '1'
-                );
+                const cameraRunning = this.normalizeBoolean(data.camera && data.camera.running, false);
                 console.log('[App] 摄像头状态 - 服务器:', cameraRunning, '前端当前:', this.cameraRunning);
 
                 // ⭐ 关键修复：无论状态是否变化，都要同步（确保页面刷新后状态正确）
@@ -355,12 +499,7 @@ class EndoscopeApp {
                 }
 
                 // ⭐ 恢复检测状态 - 使用actual状态
-                const detectionEnabled = data.detection && (
-                    data.detection.enabled === true ||
-                    data.detection.enabled === 'true' ||
-                    data.detection.enabled === 1 ||
-                    data.detection.enabled === '1'
-                );
+                const detectionEnabled = this.normalizeBoolean(data.detection && data.detection.enabled, false);
                 if (detectionEnabled !== undefined) {
                     this.detectionEnabled = detectionEnabled;
                 }
@@ -383,28 +522,28 @@ class EndoscopeApp {
 
                 // ⭐ 关键修复：更新统计数据 - 确保即使值为0也显示
                 if (data.yolo_stats) {
-                    const stats = data.yolo_stats;
+                    const stats = data.yolo_stats || this.defaultRuntimeState().yolo_stats;
                     const fpsEl = document.getElementById('statFps');
                     const detEl = document.getElementById('statDetections');
                     const framesEl = document.getElementById('statFrames');
 
                     // 确保FPS显示正确（即使为0也要显示）
                     if (fpsEl) {
-                        const fpsValue = stats.fps !== undefined && stats.fps !== null ? parseFloat(stats.fps) : 0;
+                        const fpsValue = this.normalizeNumber(stats.fps, 0);
                         fpsEl.textContent = fpsValue.toFixed(1);
                     }
                     if (detEl) {
-                        detEl.textContent = stats.total_detections !== undefined ? stats.total_detections : 0;
+                        detEl.textContent = this.toCountNumber(stats.total_detections);
                     }
                     if (framesEl) {
-                        framesEl.textContent = stats.total_frames !== undefined ? stats.total_frames : 0;
+                        framesEl.textContent = this.toCountNumber(stats.total_frames);
                     }
                 }
 
                 if (data.detection_stats) {
                     const records = data.detection_stats;
                     const recordsEl = document.getElementById('statRecords');
-                    if (recordsEl) recordsEl.textContent = records.total_count !== undefined ? records.total_count : 0;
+                    if (recordsEl) recordsEl.textContent = this.toCountNumber(records.total_count);
                 }
 
                 this.updateDefectStats(data);
@@ -426,47 +565,45 @@ class EndoscopeApp {
     async updateStats() {
         try {
             const result = await this.apiCall('/api/status');
+            const boltStatus = await this.fetchBoltStatus();
             console.log('[App] updateStats API 响应:', result);
             // ⭐ 保存状态结果，供 startCamera() 检查 desired 状态
             this.lastStatusResult = result;
             if (result.success && result.data) {
-                const data = result.data;
+                const data = this.normalizeApiData(result.data, boltStatus);
                 console.log('[App] 状态数据:', JSON.stringify(data));
 
                 // ⭐ 关键修复：更新统计数据 - 确保即使值为0也显示
                 if (data.yolo_stats) {
-                    const stats = data.yolo_stats;
+                    const stats = data.yolo_stats || this.defaultRuntimeState().yolo_stats;
                     const fpsEl = document.getElementById('statFps');
                     const detEl = document.getElementById('statDetections');
                     const framesEl = document.getElementById('statFrames');
 
                     // 确保FPS显示正确（即使为0也要显示）
                     if (fpsEl) {
-                        const fpsValue = stats.fps !== undefined && stats.fps !== null ? parseFloat(stats.fps) : 0;
+                        const fpsValue = this.normalizeNumber(stats.fps, 0);
                         fpsEl.textContent = fpsValue.toFixed(1);
                     }
                     if (detEl) {
-                        detEl.textContent = stats.total_detections !== undefined ? stats.total_detections : 0;
+                        detEl.textContent = this.toCountNumber(stats.total_detections);
                     }
                     if (framesEl) {
-                        framesEl.textContent = stats.total_frames !== undefined ? stats.total_frames : 0;
+                        framesEl.textContent = this.toCountNumber(stats.total_frames);
                     }
                 }
 
                 if (data.detection_stats) {
                     const records = data.detection_stats;
                     const recordsEl = document.getElementById('statRecords');
-                    if (recordsEl) recordsEl.textContent = records.total_count !== undefined ? records.total_count : 0;
+                    if (recordsEl) recordsEl.textContent = this.toCountNumber(records.total_count);
                 }
                 this.updateDefectStats(data);
 
                 // ⭐ 关键修复：同步摄像头和检测状态（防止状态不同步）
                 // 使用actual状态（running/enabled），这是Python层同步的真实状态
                 if (data.camera) {
-                    const cameraRunning = data.camera.running === true ||
-                        data.camera.running === 'true' ||
-                        data.camera.running === 1 ||
-                        data.camera.running === '1';
+                    const cameraRunning = this.normalizeBoolean(data.camera.running, false);
                     console.log('[App] 解析摄像头状态 - 原始值:', data.camera.running, '解析后:', cameraRunning, '当前前端状态:', this.cameraRunning);
                     // ⭐ 关键修复：无论状态是否变化都要更新，确保 startCamera() 等待循环能检测到状态
                     const stateChanged = cameraRunning !== this.cameraRunning;
@@ -493,10 +630,7 @@ class EndoscopeApp {
                 }
 
                 if (data.detection) {
-                    const detectionEnabled = data.detection.enabled === true ||
-                        data.detection.enabled === 'true' ||
-                        data.detection.enabled === 1 ||
-                        data.detection.enabled === '1';
+                    const detectionEnabled = this.normalizeBoolean(data.detection.enabled, false);
                     if (detectionEnabled !== undefined && detectionEnabled !== this.detectionEnabled) {
                         console.log('[App] 检测到检测状态变化:', this.detectionEnabled, '->', detectionEnabled);
                         this.detectionEnabled = detectionEnabled;
@@ -527,10 +661,15 @@ class EndoscopeApp {
 
     updateDefectStats(data) {
         const counts = this.extractDefectCounts(data);
-        this.renderDefectStats(counts);
+        const currentCounts = this.extractCurrentDefectCounts(data);
+        this.renderDefectStats(counts, currentCounts, data && data.bolt_summary);
     }
 
     extractDefectCounts(data) {
+        if (data && data.defect_stats && typeof data.defect_stats === 'object' && !Array.isArray(data.defect_stats)) {
+            return this.normalizeCountMap(data.defect_stats);
+        }
+
         const counts = {};
         const pushValue = (rawName, rawValue) => {
             if (rawName === undefined || rawName === null) return;
@@ -577,10 +716,39 @@ class EndoscopeApp {
         }
 
         if (Object.keys(counts).length === 0) {
-            counts['松动'] = 0;
-            counts['锈蚀'] = 0;
+            return this.defaultDefectCounts();
         }
         return counts;
+    }
+
+    extractCurrentDefectCounts(data) {
+        if (data && data.current_defect_stats && typeof data.current_defect_stats === 'object' && !Array.isArray(data.current_defect_stats)) {
+            return this.normalizeCountMap(data.current_defect_stats);
+        }
+        return this.defaultDefectCounts();
+    }
+
+    normalizeCountMap(source) {
+        const counts = this.defaultDefectCounts();
+        Object.keys(source || {}).forEach((key) => {
+            const label = this.normalizeDefectLabel(key);
+            if (!label) return;
+            counts[label] = this.toCountNumber(source[key]);
+        });
+        return counts;
+    }
+
+    defaultDefectCounts() {
+        return {
+            '螺母松动': 0,
+            '螺母缺失': 0,
+            '螺母正常': 0,
+            '螺栓头松动': 0,
+            '螺栓头缺失': 0,
+            '螺栓头正常': 0,
+            '锈蚀': 0,
+            '未锈蚀': 0
+        };
     }
 
     normalizeDefectLabel(name) {
@@ -596,6 +764,13 @@ class EndoscopeApp {
             corrosion: '锈蚀',
             crack: '裂纹',
             fracture: '断裂',
+            nut_loose: '螺母松动',
+            nut_missing: '螺母缺失',
+            nut_tight: '螺母正常',
+            head_loose: '螺栓头松动',
+            head_missing: '螺栓头缺失',
+            head_tight: '螺栓头正常',
+            not_rusty: '未锈蚀',
             missing_nut: '螺母缺失',
             missing_bolt: '螺栓缺失',
             nut_missing: '螺母缺失',
@@ -611,17 +786,56 @@ class EndoscopeApp {
         return Math.max(0, Math.round(num));
     }
 
-    renderDefectStats(counts) {
-        const container = document.getElementById('defectStatsList');
-        if (!container) return;
+    renderDefectStats(totalCounts, currentCounts = null, boltSummary = null) {
+        const totalMap = Object.assign(this.defaultDefectCounts(), totalCounts || {});
+        const currentMap = Object.assign(this.defaultDefectCounts(), currentCounts || {});
+        const fieldMap = {
+            '螺母松动': 'defectNutLoose',
+            '螺母缺失': 'defectNutMissing',
+            '螺母正常': 'defectNutNormal',
+            '螺栓头松动': 'defectHeadLoose',
+            '螺栓头缺失': 'defectHeadMissing',
+            '螺栓头正常': 'defectHeadNormal',
+            '锈蚀': 'defectRust',
+            '未锈蚀': 'defectNoRust'
+        };
 
-        const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
-        container.innerHTML = entries.map(([name, value]) => `
-            <div class="defect-item">
-                <span class="defect-name">${this.escapeHtml(name)}</span>
-                <span class="defect-count">${value}</span>
-            </div>
-        `).join('');
+        Object.keys(fieldMap).forEach((label) => {
+            const el = document.getElementById(fieldMap[label]);
+            if (el) {
+                el.textContent = this.toCountNumber(totalMap[label]);
+            }
+        });
+
+        const currentDefectsEl = document.getElementById('currentDefectCount');
+        if (currentDefectsEl) {
+            currentDefectsEl.textContent = boltSummary && boltSummary.current_frame_defects !== undefined
+                ? this.toCountNumber(boltSummary.current_frame_defects)
+                : 0;
+        }
+
+        const currentDetectionsEl = document.getElementById('currentDetectionCount');
+        if (currentDetectionsEl) {
+            currentDetectionsEl.textContent = boltSummary && boltSummary.current_frame_detections !== undefined
+                ? this.toCountNumber(boltSummary.current_frame_detections)
+                : 0;
+        }
+
+        const totalDefectsEl = document.getElementById('totalDefectCount');
+        if (totalDefectsEl) {
+            totalDefectsEl.textContent = boltSummary && boltSummary.total_defects !== undefined
+                ? this.toCountNumber(boltSummary.total_defects)
+                : Object.values(totalMap).reduce((sum, value) => sum + this.toCountNumber(value), 0);
+        }
+
+        const currentStatsEl = document.getElementById('currentDefectStatsText');
+        if (currentStatsEl) {
+            const summary = Object.entries(currentMap)
+                .filter(([, value]) => this.toCountNumber(value) > 0)
+                .map(([name, value]) => `${name} ${this.toCountNumber(value)}`)
+                .join(' / ');
+            currentStatsEl.textContent = summary || '当前帧未发现缺陷';
+        }
     }
 
     escapeHtml(text) {
