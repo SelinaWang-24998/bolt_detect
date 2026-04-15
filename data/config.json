@@ -1,0 +1,31 @@
+{
+    "server": {
+        "host": "0.0.0.0",
+        "port": 8080
+    },
+    "camera": {
+        "width": 1920,
+        "height": 1080,
+        "fps": 30
+    },
+    "yolo": {
+        "pipeline": "bolt_abc_cascade",
+        "model_paths": {
+            "a_detect": "/sdcard/2ndA_best.kmodel",
+            "b_nut_cls": "/sdcard/B_nut_best.kmodel",
+            "b_head_cls": "/sdcard/B_head_best.kmodel",
+            "c_rust_cls": "/sdcard/2ndC_rust_best.kmodel"
+        },
+        "confidence_threshold": 0.15,
+        "iou_threshold": 0.45
+    },
+    "stream": {
+        "jpeg_quality": 75,
+        "max_fps": 15
+    },
+    "detection": {
+        "save_dir": "/data/detections",
+        "max_records": 100,
+        "auto_save": true
+    }
+}

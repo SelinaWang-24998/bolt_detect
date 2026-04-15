@@ -1,0 +1,623 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>螺栓螺母缺陷检测平台</title>
+    <style>
+      :root {
+        --bg: #d9dee4;
+        --panel: #eef2f6;
+        --panel-border: #9aa7b6;
+        --text: #13202f;
+        --muted: #4a5a6c;
+        --accent: #0b7f73;
+        --accent-dim: #0a5d54;
+        --danger: #9b2e2e;
+        --ok: #1f6f46;
+      }
+
+      body.theme-night {
+        --bg: #0b0f14;
+        --panel: #111821;
+        --panel-border: #273445;
+        --text: #d8e1ec;
+        --muted: #8a98aa;
+        --accent: #36c2b4;
+        --accent-dim: #1f5b56;
+        --danger: #c25a5a;
+        --ok: #58b77f;
+      }
+
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        font-family: "Consolas", "Menlo", "Monaco", monospace;
+        background: var(--bg);
+        color: var(--text);
+        min-height: 100vh;
+        padding: 20px;
+      }
+
+      .container {
+        max-width: 1400px;
+        margin: 0 auto;
+      }
+
+      header {
+        position: relative;
+        text-align: center;
+        color: var(--text);
+        margin-bottom: 30px;
+      }
+
+      .theme-icon-btn {
+        position: absolute;
+        top: 0;
+        right: 0;
+        width: 38px;
+        height: 38px;
+        padding: 0;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 4px;
+        border: 2px solid #51657a;
+        background: #dce5ee;
+        color: #122739;
+        z-index: 2;
+      }
+
+      .theme-icon-btn:hover {
+        background: #cfdae6;
+      }
+
+      .theme-icon {
+        font-size: 18px;
+        line-height: 1;
+      }
+
+      header h1 {
+        font-size: 2.1em;
+        letter-spacing: 1px;
+        text-shadow: none;
+      }
+
+      header p {
+        color: var(--muted);
+        margin-top: 8px;
+      }
+
+      .main-content {
+        display: grid;
+        grid-template-columns: 2fr 1fr;
+        gap: 20px;
+      }
+
+      .right-column {
+        display: grid;
+        gap: 20px;
+      }
+
+      .panel {
+        background: var(--panel);
+        border-radius: 4px;
+        border: 2px solid var(--panel-border);
+        padding: 20px;
+        box-shadow: none;
+      }
+
+      .panel h2 {
+        color: var(--text);
+        margin-bottom: 15px;
+        border-bottom: 2px solid var(--panel-border);
+        padding-bottom: 10px;
+        letter-spacing: 0.5px;
+      }
+
+      /* 视频区域 */
+      .video-panel {
+        grid-row: span 2;
+      }
+
+      .video-container {
+        position: relative;
+        background: #000;
+        border-radius: 2px;
+        border: 2px solid #2f3e50;
+        overflow: hidden;
+        margin-bottom: 15px;
+      }
+
+      .video-stream {
+        width: 100%;
+        height: auto;
+        display: block;
+      }
+
+      .video-placeholder {
+        width: 100%;
+        aspect-ratio: 16/9;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--muted);
+        font-size: 1.2em;
+      }
+
+      .status-indicator {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        padding: 8px 16px;
+        border-radius: 20px;
+        font-size: 0.9em;
+        font-weight: bold;
+        background: #d4dbe3;
+        color: #102133;
+        border: 2px solid #7a8a9d;
+      }
+
+      .status-indicator.active {
+        background: #d7ece3;
+        border-color: #398866;
+        color: #135236;
+      }
+
+      .status-indicator.inactive {
+        background: #f0d9d9;
+        border-color: #9b4a4a;
+        color: #682020;
+      }
+
+      /* 控制面板 */
+      .controls {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+      }
+
+      .toggle-wrapper {
+        margin-bottom: 16px;
+      }
+
+      .toggle-tip {
+        margin-top: 8px;
+        color: var(--muted);
+        font-size: 0.9em;
+      }
+
+      .control-group {
+        margin-bottom: 15px;
+      }
+
+      .control-group label {
+        display: block;
+        margin-bottom: 5px;
+        color: var(--muted);
+        font-weight: 500;
+      }
+
+      button {
+        width: 100%;
+        padding: 12px;
+        border: none;
+        border-radius: 2px;
+        font-size: 1em;
+        font-weight: bold;
+        cursor: pointer;
+        transition: background 0.2s ease, border-color 0.2s ease;
+        border: 2px solid #51657a;
+      }
+
+      button:hover {
+        transform: none;
+        box-shadow: none;
+      }
+
+      button:active {
+        transform: none;
+      }
+
+      .btn-primary {
+        background: #dce5ee;
+        color: #122739;
+        border-color: #4d6782;
+      }
+
+      .btn-primary:hover {
+        background: #cfdae6;
+      }
+
+      .btn-success {
+        background: #d8e9e1;
+        color: #164d34;
+        border-color: #3f7b5b;
+      }
+
+      .btn-success:hover {
+        background: #cde2d8;
+      }
+
+      .btn-danger {
+        background: #ecd7d7;
+        color: #641f1f;
+        border-color: #955151;
+      }
+
+      .btn-danger:hover {
+        background: #e2caca;
+      }
+
+      input[type="range"] {
+        width: 100%;
+        margin: 10px 0;
+      }
+
+      .slider-value {
+        text-align: center;
+        color: var(--accent);
+        font-weight: bold;
+        font-size: 1.1em;
+      }
+
+      /* 统计信息 */
+      .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 10px;
+      }
+
+      .stat-item {
+        background: #e5ebf2;
+        color: var(--text);
+        padding: 15px;
+        border-radius: 2px;
+        border: 2px solid #96a4b4;
+        text-align: center;
+      }
+
+      .stat-value {
+        font-size: 2em;
+        font-weight: bold;
+        color: var(--accent);
+      }
+
+      .stat-label {
+        font-size: 0.9em;
+        color: var(--muted);
+      }
+
+      .defect-stats-list {
+        display: grid;
+        gap: 10px;
+      }
+
+      .defect-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        background: #e5ebf2;
+        border: 2px solid #96a4b4;
+        border-radius: 2px;
+        padding: 10px 12px;
+        font-size: 0.95em;
+      }
+
+      .defect-name {
+        color: var(--text);
+        font-weight: 600;
+      }
+
+      .defect-count {
+        color: var(--accent);
+        font-size: 1.15em;
+        font-weight: 700;
+      }
+
+      /* 检测记录 */
+      .detection-list {
+        max-height: 500px;
+        overflow-y: auto;
+      }
+
+      .detection-item {
+        display: flex;
+        align-items: center;
+        padding: 10px;
+        border-bottom: 1px solid #9caab9;
+        transition: background 0.2s;
+      }
+
+      .detection-item:hover {
+        background: #d9e1ea;
+      }
+
+      .detection-thumb {
+        width: 80px;
+        height: 60px;
+        object-fit: cover;
+        border-radius: 4px;
+        margin-right: 15px;
+      }
+
+      .detection-info {
+        flex: 1;
+      }
+
+      .detection-time {
+        font-size: 0.9em;
+        color: var(--muted);
+      }
+
+      .detection-confidence {
+        display: inline-block;
+        padding: 2px 8px;
+        background: #d7ece3;
+        color: #145239;
+        border-radius: 2px;
+        border: 1px solid #438b6a;
+        font-size: 0.8em;
+        margin-top: 5px;
+      }
+
+      .detection-actions {
+        display: flex;
+        gap: 5px;
+      }
+
+      .btn-small {
+        padding: 6px 12px;
+        font-size: 0.9em;
+      }
+
+      .empty-state {
+        text-align: center;
+        padding: 40px;
+        color: var(--muted);
+      }
+
+      body.theme-night .panel {
+        border: 1px solid var(--panel-border);
+      }
+
+      body.theme-night .theme-icon-btn {
+        border: 1px solid #33465c;
+        background: #1b2b3d;
+        color: var(--text);
+      }
+
+      body.theme-night .theme-icon-btn:hover {
+        background: #22364d;
+      }
+
+      body.theme-night .panel h2 {
+        border-bottom: 1px solid var(--panel-border);
+      }
+
+      body.theme-night .video-container {
+        border: 1px solid #1b2430;
+      }
+
+      body.theme-night .status-indicator {
+        background: #1b2430;
+        color: var(--text);
+        border: 1px solid #2b394c;
+      }
+
+      body.theme-night .status-indicator.active {
+        background: #163229;
+        border-color: #245f4b;
+        color: #81d8b0;
+      }
+
+      body.theme-night .status-indicator.inactive {
+        background: #321818;
+        border-color: #5d3131;
+        color: #d59494;
+      }
+
+      body.theme-night button {
+        border: 1px solid #33465c;
+      }
+
+      body.theme-night .btn-primary {
+        background: #1b2b3d;
+        color: var(--text);
+        border-color: #365271;
+      }
+
+      body.theme-night .btn-primary:hover {
+        background: #22364d;
+      }
+
+      body.theme-night .btn-success {
+        background: #183128;
+        color: #b2e6c6;
+        border-color: #2b5f4b;
+      }
+
+      body.theme-night .btn-success:hover {
+        background: #1c3c31;
+      }
+
+      body.theme-night .btn-danger {
+        background: #321f1f;
+        color: #e2b6b6;
+        border-color: #674242;
+      }
+
+      body.theme-night .btn-danger:hover {
+        background: #3a2525;
+      }
+
+      body.theme-night .stat-item {
+        background: #0f141b;
+        border: 1px solid #223042;
+      }
+
+      body.theme-night .defect-item {
+        background: #0f141b;
+        border: 1px solid #223042;
+      }
+
+      body.theme-night .detection-item {
+        border-bottom: 1px solid #223042;
+      }
+
+      body.theme-night .detection-item:hover {
+        background: #151e29;
+      }
+
+      body.theme-night .detection-confidence {
+        background: #15352e;
+        color: #8ddcba;
+        border: 1px solid #2e6a59;
+      }
+
+      /* 响应式设计 */
+      @media (max-width: 1024px) {
+        .main-content {
+          grid-template-columns: 1fr;
+        }
+
+        .video-panel {
+          grid-row: span 1;
+        }
+      }
+    </style>
+  </head>
+
+  <body>
+    <div class="container">
+      <header>
+        <h1>螺栓螺母缺陷检测</h1>
+        <p>实时监控与缺陷识别</p>
+        <button
+          id="btnThemeToggle"
+          class="theme-icon-btn"
+          aria-label="切换显示模式"
+          title="切换显示模式"
+        >
+          <span id="themeIcon" class="theme-icon">☾</span>
+        </button>
+      </header>
+
+      <div class="main-content">
+        <!-- 视频显示区 -->
+        <div class="panel video-panel">
+          <h2>实时视频</h2>
+          <div class="video-container">
+            <img id="videoStream" class="video-stream" style="display: none" />
+            <div id="videoPlaceholder" class="video-placeholder">
+              摄像头未启动
+            </div>
+            <div id="statusIndicator" class="status-indicator inactive">
+              离线
+            </div>
+          </div>
+
+          <div class="controls">
+            <button id="btnStartCamera" class="btn-success">启动摄像头</button>
+            <button id="btnStopCamera" class="btn-danger">停止摄像头</button>
+          </div>
+
+          <div class="control-group">
+            <label
+              >置信度阈值:
+              <span id="confidenceValue" class="slider-value">0.50</span></label
+            >
+            <input
+              type="range"
+              id="confidenceSlider"
+              min="10"
+              max="95"
+              value="50"
+              step="5"
+            />
+          </div>
+        </div>
+
+        <div class="right-column">
+          <!-- 检测控制与运行统计 -->
+          <div class="panel">
+            <h2>检测控制</h2>
+            <div class="toggle-wrapper">
+              <button id="btnToggleDetection" class="btn-primary">
+                开启检测
+              </button>
+              <div id="toggleDetectionTip" class="toggle-tip">
+                当前状态: 检测关闭
+              </div>
+            </div>
+
+            <h2 style="margin-top: 6px">运行统计</h2>
+            <div class="stats-grid">
+              <div class="stat-item">
+                <div class="stat-value" id="statFps">0</div>
+                <div class="stat-label">FPS</div>
+              </div>
+              <div class="stat-item">
+                <div class="stat-value" id="statDetections">0</div>
+                <div class="stat-label">检测总数</div>
+              </div>
+              <div class="stat-item">
+                <div class="stat-value" id="statFrames">0</div>
+                <div class="stat-label">处理帧数</div>
+              </div>
+              <div class="stat-item">
+                <div class="stat-value" id="statRecords">0</div>
+                <div class="stat-label">保存记录</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 缺陷统计 -->
+          <div class="panel">
+            <h2>各类缺陷数量</h2>
+            <div id="defectStatsList" class="defect-stats-list">
+              <div class="defect-item">
+                <span class="defect-name">松动</span>
+                <span class="defect-count" id="defectLoose">0</span>
+              </div>
+              <div class="defect-item">
+                <span class="defect-name">锈蚀</span>
+                <span class="defect-count" id="defectRust">0</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 检测记录 -->
+          <div class="panel">
+            <h2>检测记录</h2>
+            <div style="margin-bottom: 10px">
+              <button
+                id="btnRefreshRecords"
+                class="btn-primary btn-small"
+                style="width: auto; display: inline-block"
+              >
+                刷新
+              </button>
+              <button
+                id="btnClearRecords"
+                class="btn-danger btn-small"
+                style="width: auto; display: inline-block"
+              >
+                清空所有
+              </button>
+            </div>
+            <div id="detectionList" class="detection-list">
+              <div class="empty-state">暂无检测记录</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>
