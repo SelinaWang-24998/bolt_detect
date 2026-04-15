@@ -23,6 +23,9 @@ CONF_THRESHOLD = 0.15
 NMS_THRESHOLD = 0.45
 FRAME_PUSH_INTERVAL_MS = 100
 DETECTION_SAVE_THRESHOLD = 0.3
+DETECTION_SAVE_COOLDOWN_MS = 1500
+DEFECT_DEDUP_WINDOW_MS = 4000
+DEFECT_DEDUP_DISTANCE_PX = 60
 MAX_CONSECUTIVE_FAILURES = 5
 RECORD_CHECK_INTERVAL_MS = 1000
 STATUS_SAVE_INTERVAL_MS = 1000
@@ -49,6 +52,105 @@ def format_display_percent(score):
     return "{:.1f}%".format(adjust_display_confidence(score) * 100.0)
 
 
+def build_defect_signature(results):
+    parts = []
+    for item in results or []:
+        bbox = item.get("bbox", [0, 0, 0, 0])
+        parts.append(
+            "{}:{}:{}:{}:{}:{}".format(
+                item.get("part_name", ""),
+                item.get("state_name", ""),
+                item.get("rust_name", ""),
+                int(bbox[0]),
+                int(bbox[1]),
+                int(float(item.get("det_score", 0.0)) * 100),
+            )
+        )
+    parts.sort()
+    return "|".join(parts)
+
+
+def get_result_defect_labels(result):
+    labels = []
+    part_name = result.get("part_name", "")
+    state_name = result.get("state_name", "")
+    rust_name = result.get("rust_name", "")
+
+    if part_name == "nut":
+        if state_name == "loose":
+            labels.append("螺母松动")
+        elif state_name == "missing":
+            labels.append("螺母缺失")
+    elif part_name == "head":
+        if state_name == "loose":
+            labels.append("螺栓头松动")
+        elif state_name == "missing":
+            labels.append("螺栓头缺失")
+
+    if rust_name == "rusty":
+        labels.append("锈蚀")
+
+    return labels
+
+
+def get_result_center(result):
+    bbox = result.get("bbox", [0, 0, 0, 0])
+    x = int(bbox[0])
+    y = int(bbox[1])
+    w = int(bbox[2])
+    h = int(bbox[3])
+    return (x + w // 2, y + h // 2)
+
+
+def prune_recent_defects(recent_defects, now_ms):
+    kept = []
+    for item in recent_defects:
+        if time.ticks_diff(now_ms, item.get("ts", 0)) <= DEFECT_DEDUP_WINDOW_MS:
+            kept.append(item)
+    return kept
+
+
+def is_same_defect_event(recent_item, label, center):
+    if recent_item.get("label") != label:
+        return False
+    rx, ry = recent_item.get("center", (0, 0))
+    cx, cy = center
+    return abs(rx - cx) <= DEFECT_DEDUP_DISTANCE_PX and abs(ry - cy) <= DEFECT_DEDUP_DISTANCE_PX
+
+
+def consume_unique_defect_events(results, recent_defects, now_ms):
+    unique_stats = {
+        "螺母松动": 0,
+        "螺母缺失": 0,
+        "螺母正常": 0,
+        "螺栓头松动": 0,
+        "螺栓头缺失": 0,
+        "螺栓头正常": 0,
+        "锈蚀": 0,
+        "未锈蚀": 0,
+    }
+    recent_defects = prune_recent_defects(recent_defects, now_ms)
+
+    for result in results or []:
+        center = get_result_center(result)
+        for label in get_result_defect_labels(result):
+            duplicated = False
+            for item in recent_defects:
+                if is_same_defect_event(item, label, center):
+                    duplicated = True
+                    item["ts"] = now_ms
+                    break
+            if not duplicated:
+                unique_stats[label] += 1
+                recent_defects.append({
+                    "label": label,
+                    "center": center,
+                    "ts": now_ms,
+                })
+
+    return unique_stats, recent_defects
+
+
 def save_detection_records(results, detection_manager, save_img, threshold):
     if save_img is None or results is None:
         return
@@ -73,10 +175,12 @@ def save_detection_records(results, detection_manager, save_img, threshold):
             rec_id = detection_manager.add_detection(image=save_img, bbox=bbox, confidence=display_confidence)
             if rec_id:
                 print("[检测管理] 已保存记录 id={}, 显示置信度={:.2f}, bbox={}".format(rec_id, display_confidence, bbox))
+                return rec_id
         except Exception as e:
             print("[检测管理] 保存检测记录异常: {}".format(e))
     except Exception as e:
         print("[检测管理] 保存检测记录失败: {}".format(e))
+    return None
 
 
 def draw_results_on_image(img, results):
@@ -242,7 +346,7 @@ def build_bolt_status(results, total_frames, total_detections, total_defect_stat
         "defect_stats": total_defect_stats,
         "current_defect_stats": defect_stats,
         "bolt_summary": {
-            "current_frame_detections": len(results or []),
+            "current_frame_detections": current_frame_defects,
             "current_frame_defects": current_frame_defects,
             "total_defects": count_defects(total_defect_stats),
             "total_frames": total_frames,
@@ -314,7 +418,7 @@ def main():
 
     web = init_web_adapter(quality=60, debug_verbose=True)
 
-    detection_manager = DetectionManager(save_dir="/data/detections", max_records=100)
+    detection_manager = DetectionManager(save_dir="/data/detections", max_records=300)
     detection_manager.set_web_adapter(web)
     print("[检测管理] 检测记录管理器已初始化")
 
@@ -339,6 +443,9 @@ def main():
     last_status_save_ts = time.ticks_ms()
     consecutive_failures = 0
     total_defect_stats = build_defect_stats([])
+    recent_defects = []
+    last_saved_ts = 0
+    last_saved_signature = ""
 
     web.update_runtime(stream_enabled, detection_enabled, detector.det_conf_thresh)
     print("[提示] 浏览器访问 http://{}:8080/".format(ip_address))
@@ -369,17 +476,32 @@ def main():
                 results = detector.run(frame)
                 detector.draw_result(results, pl.osd_img)
                 current_defect_stats = build_defect_stats(results)
-                total_detections += len(results)
-                total_defect_stats = merge_defect_stats(total_defect_stats, current_defect_stats)
+                current_frame_defect_count = count_defects(current_defect_stats)
+                now_ms = time.ticks_ms()
+                unique_defect_stats, recent_defects = consume_unique_defect_events(results, recent_defects, now_ms)
+                unique_defect_count = count_defects(unique_defect_stats)
+                total_detections += unique_defect_count
+                total_defect_stats = merge_defect_stats(total_defect_stats, unique_defect_stats)
                 draw_defect_summary(pl.osd_img, current_defect_stats, total_defect_stats, total_detections)
 
                 try:
                     from media.sensor import CAM_CHN_ID_0
 
-                    save_img = pl.sensor.snapshot(chn=CAM_CHN_ID_0)
-                    draw_results_on_image(save_img, results)
-                    draw_defect_summary(save_img, current_defect_stats, total_defect_stats, total_detections)
-                    save_detection_records(results, detection_manager, save_img, DETECTION_SAVE_THRESHOLD)
+                    defect_signature = build_defect_signature(results)
+                    should_save = (
+                        current_frame_defect_count > 0 and
+                        time.ticks_diff(now_ms, last_saved_ts) >= DETECTION_SAVE_COOLDOWN_MS and
+                        defect_signature != last_saved_signature
+                    )
+
+                    if should_save:
+                        save_img = pl.sensor.snapshot(chn=CAM_CHN_ID_0)
+                        draw_results_on_image(save_img, results)
+                        draw_defect_summary(save_img, current_defect_stats, total_defect_stats, total_detections)
+                        rec_id = save_detection_records(results, detection_manager, save_img, DETECTION_SAVE_THRESHOLD)
+                        if rec_id:
+                            last_saved_ts = now_ms
+                            last_saved_signature = defect_signature
                 except Exception as e:
                     if total_detections <= 3:
                         print("[检测管理] 获取snapshot失败: {}".format(e))
