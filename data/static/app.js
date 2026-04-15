@@ -60,6 +60,10 @@ class EndoscopeApp {
         this.statusIndicator = document.getElementById('statusIndicator');
         this.themeToggleButton = document.getElementById('btnThemeToggle');
         this.themeIcon = document.getElementById('themeIcon');
+        this.imageModal = document.getElementById('imagePreviewModal');
+        this.imageModalImg = document.getElementById('imagePreviewImg');
+        this.imageModalCaption = document.getElementById('imagePreviewCaption');
+        this.previewRecordIndex = -1;
 
         // 绑定按钮事件
         document.getElementById('btnStartCamera').addEventListener('click', () => this.startCamera());
@@ -73,6 +77,34 @@ class EndoscopeApp {
         }
         document.getElementById('btnRefreshRecords').addEventListener('click', () => this.loadRecords());
         document.getElementById('btnClearRecords').addEventListener('click', () => this.clearRecords());
+        const modalCloseButton = document.getElementById('btnCloseImagePreview');
+        if (modalCloseButton) {
+            modalCloseButton.addEventListener('click', () => this.closeImagePreview());
+        }
+        if (this.imageModal) {
+            this.imageModal.addEventListener('click', (event) => {
+                if (event.target === this.imageModal) {
+                    this.closeImagePreview();
+                }
+            });
+        }
+        document.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape') {
+                this.closeImagePreview();
+            } else if (event.key === 'ArrowLeft') {
+                this.previewAdjacentRecord(-1);
+            } else if (event.key === 'ArrowRight') {
+                this.previewAdjacentRecord(1);
+            }
+        });
+        const prevPreviewButton = document.getElementById('btnPrevImagePreview');
+        const nextPreviewButton = document.getElementById('btnNextImagePreview');
+        if (prevPreviewButton) {
+            prevPreviewButton.addEventListener('click', () => this.previewAdjacentRecord(-1));
+        }
+        if (nextPreviewButton) {
+            nextPreviewButton.addEventListener('click', () => this.previewAdjacentRecord(1));
+        }
         const prevButton = document.getElementById('btnPrevRecords');
         const nextButton = document.getElementById('btnNextRecords');
         if (prevButton) {
@@ -901,7 +933,12 @@ class EndoscopeApp {
             const confidence = (record.confidence * 100).toFixed(1);
             html += `
                 <div class="detection-item" data-id="${record.id}">
-                    <img src="/detections/${encodeURIComponent(record.filename)}" class="detection-thumb" alt="检测图像">
+                    <img
+                        src="/detections/${encodeURIComponent(record.filename)}"
+                        class="detection-thumb"
+                        alt="检测图像"
+                        onclick="app.previewRecord(${record.id})"
+                    >
                     <div class="detection-info">
                         <div class="detection-time">${record.time_str}</div>
                         <span class="detection-confidence">置信度: ${confidence}%</span>
@@ -944,6 +981,70 @@ class EndoscopeApp {
         }
         this.recordsPage = nextPage;
         this.renderRecords(this._cachedRecords);
+    }
+
+    previewRecord(id) {
+        const record = this.findRecord(id);
+        if (!record || !this.imageModal || !this.imageModalImg) {
+            return;
+        }
+        this.previewRecordIndex = this.findRecordIndex(id);
+        this.renderPreviewRecord(record);
+    }
+
+    renderPreviewRecord(record) {
+        if (!record || !this.imageModal || !this.imageModalImg) {
+            return;
+        }
+        const imageUrl = `/detections/${encodeURIComponent(record.filename)}`;
+        this.imageModalImg.src = imageUrl;
+        this.imageModalImg.alt = record.filename || '检测记录大图';
+        if (this.imageModalCaption) {
+            const confidence = this.normalizeNumber(record.confidence, 0) * 100;
+            this.imageModalCaption.textContent = `${record.time_str || ''}  置信度: ${confidence.toFixed(1)}%`;
+        }
+        this.imageModal.style.display = 'flex';
+        this.updatePreviewNavButtons();
+    }
+
+    previewAdjacentRecord(step) {
+        if (!this.imageModal || this.imageModal.style.display !== 'flex') {
+            return;
+        }
+        if (!Array.isArray(this._cachedRecords) || this._cachedRecords.length === 0) {
+            return;
+        }
+        const nextIndex = this.previewRecordIndex + step;
+        if (nextIndex < 0 || nextIndex >= this._cachedRecords.length) {
+            return;
+        }
+        this.previewRecordIndex = nextIndex;
+        this.renderPreviewRecord(this._cachedRecords[this.previewRecordIndex]);
+    }
+
+    updatePreviewNavButtons() {
+        const prevButton = document.getElementById('btnPrevImagePreview');
+        const nextButton = document.getElementById('btnNextImagePreview');
+        const total = Array.isArray(this._cachedRecords) ? this._cachedRecords.length : 0;
+        if (prevButton) {
+            prevButton.disabled = this.previewRecordIndex <= 0 || total === 0;
+        }
+        if (nextButton) {
+            nextButton.disabled = this.previewRecordIndex < 0 || this.previewRecordIndex >= total - 1 || total === 0;
+        }
+    }
+
+    closeImagePreview() {
+        if (!this.imageModal || !this.imageModalImg) {
+            return;
+        }
+        this.imageModal.style.display = 'none';
+        this.imageModalImg.src = '';
+        this.previewRecordIndex = -1;
+        if (this.imageModalCaption) {
+            this.imageModalCaption.textContent = '';
+        }
+        this.updatePreviewNavButtons();
     }
 
     // 下载记录
@@ -1025,6 +1126,15 @@ class EndoscopeApp {
             if (rec && (rec.id === id || String(rec.id) === String(id))) return rec;
         }
         return null;
+    }
+
+    findRecordIndex(id) {
+        if (!this._cachedRecords || !Array.isArray(this._cachedRecords)) return -1;
+        for (let i = 0; i < this._cachedRecords.length; i++) {
+            const rec = this._cachedRecords[i];
+            if (rec && (rec.id === id || String(rec.id) === String(id))) return i;
+        }
+        return -1;
     }
 }
 

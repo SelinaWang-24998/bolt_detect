@@ -408,6 +408,69 @@
         gap: 8px;
       }
 
+      .image-preview-modal {
+        position: fixed;
+        inset: 0;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        background: rgba(7, 12, 18, 0.78);
+        z-index: 9999;
+        padding: 24px;
+      }
+
+      .image-preview-panel {
+        max-width: min(92vw, 1100px);
+        max-height: 90vh;
+        background: var(--panel);
+        border: 2px solid var(--panel-border);
+        border-radius: 4px;
+        padding: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+
+      .image-preview-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+      }
+
+      .image-preview-actions {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+      }
+
+      .image-preview-title {
+        color: var(--text);
+        font-weight: 700;
+      }
+
+      .image-preview-body {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        overflow: auto;
+      }
+
+      .image-preview-body img {
+        max-width: 100%;
+        max-height: 70vh;
+        object-fit: contain;
+        border: 2px solid #96a4b4;
+        border-radius: 2px;
+        background: #000;
+      }
+
+      .image-preview-caption {
+        color: var(--muted);
+        font-size: 0.92em;
+      }
+
       .detection-item {
         display: flex;
         align-items: center;
@@ -426,6 +489,7 @@
         object-fit: cover;
         border-radius: 4px;
         margin-right: 15px;
+        cursor: zoom-in;
       }
 
       .detection-info {
@@ -564,6 +628,10 @@
 
       body.theme-night .records-pagination {
         border-top: 1px solid #223042;
+      }
+
+      body.theme-night .image-preview-modal {
+        background: rgba(0, 0, 0, 0.82);
       }
 
       body.theme-night .detection-confidence {
@@ -778,6 +846,41 @@
             </div>
           </div>
         </div>
+      </div>
+    </div>
+
+    <div id="imagePreviewModal" class="image-preview-modal">
+      <div class="image-preview-panel">
+        <div class="image-preview-header">
+          <div class="image-preview-title">检测记录预览</div>
+          <div class="image-preview-actions">
+            <button
+              id="btnPrevImagePreview"
+              class="btn-primary btn-small"
+              style="width: auto; display: inline-block"
+            >
+              上一张
+            </button>
+            <button
+              id="btnNextImagePreview"
+              class="btn-primary btn-small"
+              style="width: auto; display: inline-block"
+            >
+              下一张
+            </button>
+            <button
+              id="btnCloseImagePreview"
+              class="btn-danger btn-small"
+              style="width: auto; display: inline-block"
+            >
+              关闭
+            </button>
+          </div>
+        </div>
+        <div class="image-preview-body">
+          <img id="imagePreviewImg" alt="检测记录大图预览" />
+        </div>
+        <div id="imagePreviewCaption" class="image-preview-caption"></div>
       </div>
     </div>
 
