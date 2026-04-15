@@ -440,7 +440,7 @@ def main():
 
     web = init_web_adapter(quality=45, debug_verbose=False)
 
-    detection_manager = DetectionManager(save_dir="/data/detections", max_records=300)
+    detection_manager = DetectionManager(save_dir="/data/detections", max_records=500)
     detection_manager.set_web_adapter(web)
     print("[检测管理] 检测记录管理器已初始化")
 

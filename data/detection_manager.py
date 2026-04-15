@@ -11,7 +11,7 @@ import utime as time
 class DetectionManager:
     """检测记录管理器"""
     
-    def __init__(self, save_dir='/data/detections', max_records=100):
+    def __init__(self, save_dir='/data/detections', max_records=500):
         self.save_dir = save_dir
         self.max_records = max_records
         # MicroPython不支持os.path.join，手动拼接路径

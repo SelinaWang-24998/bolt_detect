@@ -9,6 +9,8 @@ class EndoscopeApp {
         this.lastStatusResult = null;  // 保存最后一次状态查询结果
         this._cachedRecords = [];
         this.boltStatus = null;
+        this.recordsPage = 1;
+        this.recordsPageSize = 10;
 
         this.init();
     }
@@ -71,6 +73,14 @@ class EndoscopeApp {
         }
         document.getElementById('btnRefreshRecords').addEventListener('click', () => this.loadRecords());
         document.getElementById('btnClearRecords').addEventListener('click', () => this.clearRecords());
+        const prevButton = document.getElementById('btnPrevRecords');
+        const nextButton = document.getElementById('btnNextRecords');
+        if (prevButton) {
+            prevButton.addEventListener('click', () => this.changeRecordsPage(-1));
+        }
+        if (nextButton) {
+            nextButton.addEventListener('click', () => this.changeRecordsPage(1));
+        }
 
         // 置信度滑块
         const slider = document.getElementById('confidenceSlider');
@@ -848,14 +858,17 @@ class EndoscopeApp {
     }
 
     // 加载检测记录
-    async loadRecords() {
-        const result = await this.apiCall('/api/records?limit=20');
+    async loadRecords(resetPage = false) {
+        const result = await this.apiCall('/api/records?limit=100');
         if (result.success) {
             // 缓存记录，供查找/下载等操作使用
             try {
                 this._cachedRecords = Array.isArray(result.data) ? result.data : [];
             } catch (e) {
                 this._cachedRecords = [];
+            }
+            if (resetPage) {
+                this.recordsPage = 1;
             }
             this.renderRecords(this._cachedRecords);
         }
@@ -864,14 +877,27 @@ class EndoscopeApp {
     // 渲染检测记录
     renderRecords(records) {
         const listContainer = document.getElementById('detectionList');
+        const totalRecords = Array.isArray(records) ? records.length : 0;
+        const totalPages = Math.max(1, Math.ceil(totalRecords / this.recordsPageSize));
+        if (this.recordsPage > totalPages) {
+            this.recordsPage = totalPages;
+        }
+        if (this.recordsPage < 1) {
+            this.recordsPage = 1;
+        }
 
         if (!records || records.length === 0) {
             listContainer.innerHTML = '<div class="empty-state">暂无检测记录</div>';
+            this.updateRecordsPagination(0, 1);
             return;
         }
 
+        const start = (this.recordsPage - 1) * this.recordsPageSize;
+        const end = start + this.recordsPageSize;
+        const pageRecords = records.slice(start, end);
+
         let html = '';
-        records.forEach(record => {
+        pageRecords.forEach(record => {
             const confidence = (record.confidence * 100).toFixed(1);
             html += `
                 <div class="detection-item" data-id="${record.id}">
@@ -889,6 +915,35 @@ class EndoscopeApp {
         });
 
         listContainer.innerHTML = html;
+        this.updateRecordsPagination(totalRecords, totalPages);
+    }
+
+    updateRecordsPagination(totalRecords, totalPages) {
+        const pageInfo = document.getElementById('recordsPageInfo');
+        const prevButton = document.getElementById('btnPrevRecords');
+        const nextButton = document.getElementById('btnNextRecords');
+        const safeTotalPages = Math.max(1, totalPages || 1);
+
+        if (pageInfo) {
+            pageInfo.textContent = `第 ${this.recordsPage} / ${safeTotalPages} 页，共 ${totalRecords} 条`;
+        }
+        if (prevButton) {
+            prevButton.disabled = this.recordsPage <= 1 || totalRecords === 0;
+        }
+        if (nextButton) {
+            nextButton.disabled = this.recordsPage >= safeTotalPages || totalRecords === 0;
+        }
+    }
+
+    changeRecordsPage(step) {
+        const totalRecords = Array.isArray(this._cachedRecords) ? this._cachedRecords.length : 0;
+        const totalPages = Math.max(1, Math.ceil(totalRecords / this.recordsPageSize));
+        const nextPage = this.recordsPage + step;
+        if (nextPage < 1 || nextPage > totalPages) {
+            return;
+        }
+        this.recordsPage = nextPage;
+        this.renderRecords(this._cachedRecords);
     }
 
     // 下载记录
@@ -915,7 +970,7 @@ class EndoscopeApp {
         const result = await this.apiCall(`/api/records/${id}`, 'DELETE');
         if (result.success) {
             this.showMessage('记录已删除', 'success');
-            this.loadRecords();
+            this.loadRecords(false);
         } else {
             this.showMessage('删除失败: ' + result.message, 'error');
         }
@@ -930,7 +985,8 @@ class EndoscopeApp {
         const result = await this.apiCall('/api/records/clear', 'POST');
         if (result.success) {
             this.showMessage('所有记录已清空', 'success');
-            this.loadRecords();
+            this.recordsPage = 1;
+            this.loadRecords(true);
         } else {
             this.showMessage('清空失败: ' + result.message, 'error');
         }
