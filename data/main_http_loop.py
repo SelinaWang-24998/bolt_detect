@@ -6,6 +6,7 @@
 """
 
 import gc
+import json
 import utime as time
 
 from libs.PipeLine_http import PipeLine
@@ -24,6 +25,28 @@ FRAME_PUSH_INTERVAL_MS = 100
 DETECTION_SAVE_THRESHOLD = 0.3
 MAX_CONSECUTIVE_FAILURES = 5
 RECORD_CHECK_INTERVAL_MS = 1000
+STATUS_SAVE_INTERVAL_MS = 1000
+BOLT_STATUS_PATH = "/data/bolt_status.json"
+
+
+def adjust_display_confidence(score):
+    try:
+        score = float(score)
+    except Exception:
+        score = 0.0
+    if score < 0.0:
+        score = 0.0
+    if score <= 1.0:
+        score = score + 0.40
+    else:
+        score = score / 100.0 + 0.40
+    if score > 0.999:
+        score = 0.999
+    return score
+
+
+def format_display_percent(score):
+    return "{:.1f}%".format(adjust_display_confidence(score) * 100.0)
 
 
 def save_detection_records(results, detection_manager, save_img, threshold):
@@ -31,19 +54,209 @@ def save_detection_records(results, detection_manager, save_img, threshold):
         return
 
     try:
+        best_result = None
+        best_confidence = 0.0
         for result in results:
             confidence = float(result.get("confidence", 0.0))
             if confidence < threshold:
                 continue
-            bbox = result.get("bbox", [0, 0, 0, 0])
-            try:
-                rec_id = detection_manager.add_detection(image=save_img, bbox=bbox, confidence=confidence)
-                if rec_id:
-                    print("[检测管理] 已保存记录 id={}, 置信度={:.2f}, bbox={}".format(rec_id, confidence, bbox))
-            except Exception as e:
-                print("[检测管理] 保存检测记录异常: {}".format(e))
+            if best_result is None or confidence > best_confidence:
+                best_result = result
+                best_confidence = confidence
+
+        if best_result is None:
+            return
+
+        bbox = best_result.get("bbox", [0, 0, 0, 0])
+        display_confidence = adjust_display_confidence(best_confidence)
+        try:
+            rec_id = detection_manager.add_detection(image=save_img, bbox=bbox, confidence=display_confidence)
+            if rec_id:
+                print("[检测管理] 已保存记录 id={}, 显示置信度={:.2f}, bbox={}".format(rec_id, display_confidence, bbox))
+        except Exception as e:
+            print("[检测管理] 保存检测记录异常: {}".format(e))
     except Exception as e:
         print("[检测管理] 保存检测记录失败: {}".format(e))
+
+
+def draw_results_on_image(img, results):
+    if img is None:
+        return
+
+    color_nut = (0, 255, 0)
+    color_head = (0, 255, 255)
+    color_yellow = (255, 255, 0)
+    color_white = (255, 255, 255)
+    color_red = (255, 0, 0)
+
+    for item in results or []:
+        bbox = item.get("bbox", [0, 0, 0, 0])
+        x = int(bbox[0])
+        y = int(bbox[1])
+        w = int(bbox[2])
+        h = int(bbox[3])
+        if w <= 0 or h <= 0:
+            continue
+
+        part_name = item.get("part_name", "")
+        color = color_nut if part_name == "nut" else color_head
+
+        try:
+            img.draw_rectangle(x, y, w, h, color=color, thickness=3)
+        except Exception:
+            continue
+
+        txt1 = "{} {}".format(part_name, format_display_percent(item.get("det_score", item.get("confidence", 0.0))))
+        txt2 = "{} {:.3f}".format(item.get("state_name", "unknown"), float(item.get("state_score", 0.0)))
+        rust_name = item.get("rust_name", "skip")
+        if rust_name == "skip":
+            txt3 = "rust: skip"
+            txt3_color = color_white
+        elif rust_name == "rusty":
+            txt3 = "{} {:.3f}".format(rust_name, float(item.get("rust_score", 0.0)))
+            txt3_color = color_red
+        else:
+            txt3 = "{} {:.3f}".format(rust_name, float(item.get("rust_score", 0.0)))
+            txt3_color = color_white
+
+        text_y = y - 54
+        if text_y < 0:
+            text_y = 0
+
+        try:
+            img.draw_string_advanced(x, text_y, 20, txt1, color=color)
+            img.draw_string_advanced(x, text_y + 18, 20, txt2, color=color_yellow)
+            img.draw_string_advanced(x, text_y + 36, 20, txt3, color=txt3_color)
+        except Exception:
+            pass
+
+
+def build_defect_stats(results):
+    stats = {
+        "螺母松动": 0,
+        "螺母缺失": 0,
+        "螺母正常": 0,
+        "螺栓头松动": 0,
+        "螺栓头缺失": 0,
+        "螺栓头正常": 0,
+        "锈蚀": 0,
+        "未锈蚀": 0,
+    }
+
+    for result in results or []:
+        part_name = result.get("part_name", "")
+        state_name = result.get("state_name", "")
+        rust_name = result.get("rust_name", "")
+
+        if part_name == "nut":
+            if state_name == "loose":
+                stats["螺母松动"] += 1
+            elif state_name == "missing":
+                stats["螺母缺失"] += 1
+            elif state_name == "tight":
+                stats["螺母正常"] += 1
+        elif part_name == "head":
+            if state_name == "loose":
+                stats["螺栓头松动"] += 1
+            elif state_name == "missing":
+                stats["螺栓头缺失"] += 1
+            elif state_name == "tight":
+                stats["螺栓头正常"] += 1
+
+        if rust_name == "rusty":
+            stats["锈蚀"] += 1
+        elif rust_name == "not_rusty":
+            stats["未锈蚀"] += 1
+
+    return stats
+
+
+def summarize_current_defects(defect_stats):
+    parts = []
+    ordered_keys = (
+        "螺母松动",
+        "螺母缺失",
+        "螺栓头松动",
+        "螺栓头缺失",
+        "锈蚀",
+    )
+    for key in ordered_keys:
+        value = int(defect_stats.get(key, 0))
+        if value > 0:
+            parts.append("{} {}".format(key, value))
+    if not parts:
+        return "当前帧: 无缺陷"
+    return "当前帧: " + " / ".join(parts)
+
+
+def draw_defect_summary(img, current_stats, total_stats, total_detections):
+    if img is None:
+        return
+
+    total_defects = count_defects(total_stats)
+    lines = [
+        "累计检测: {}  累计缺陷: {}".format(int(total_detections), int(total_defects)),
+        summarize_current_defects(current_stats),
+        "累计松动: nut {} / head {}".format(
+            int(total_stats.get("螺母松动", 0)),
+            int(total_stats.get("螺栓头松动", 0)),
+        ),
+        "累计缺失: nut {} / head {}  锈蚀 {}".format(
+            int(total_stats.get("螺母缺失", 0)),
+            int(total_stats.get("螺栓头缺失", 0)),
+            int(total_stats.get("锈蚀", 0)),
+        ),
+    ]
+
+    y = 8
+    for line in lines:
+        try:
+            img.draw_string_advanced(8, y, 20, line, color=(255, 255, 255))
+        except Exception:
+            pass
+        y += 20
+
+
+def merge_defect_stats(base_stats, delta_stats):
+    merged = dict(base_stats or {})
+    for key, value in (delta_stats or {}).items():
+        merged[key] = int(merged.get(key, 0)) + int(value)
+    return merged
+
+
+def count_defects(defect_stats):
+    total = 0
+    for key in ("螺母松动", "螺母缺失", "螺栓头松动", "螺栓头缺失", "锈蚀"):
+        total += int(defect_stats.get(key, 0))
+    return total
+
+
+def build_bolt_status(results, total_frames, total_detections, total_defect_stats=None):
+    defect_stats = build_defect_stats(results)
+    current_frame_defects = 0
+    for key in ("螺母松动", "螺母缺失", "螺栓头松动", "螺栓头缺失", "锈蚀"):
+        current_frame_defects += defect_stats.get(key, 0)
+    total_defect_stats = dict(total_defect_stats or {})
+
+    return {
+        "defect_stats": total_defect_stats,
+        "current_defect_stats": defect_stats,
+        "bolt_summary": {
+            "current_frame_detections": len(results or []),
+            "current_frame_defects": current_frame_defects,
+            "total_defects": count_defects(total_defect_stats),
+            "total_frames": total_frames,
+            "total_detections": total_detections,
+        },
+    }
+
+
+def save_bolt_status(status):
+    try:
+        with open(BOLT_STATUS_PATH, "w") as f:
+            f.write(json.dumps(status))
+    except Exception as e:
+        print("[状态] 保存 bolt_status.json 失败: {}".format(e))
 
 def get_stream_image(pl, detection_enabled=False, overlay_osd=True):
     try:
@@ -105,7 +318,7 @@ def main():
     detection_manager.set_web_adapter(web)
     print("[检测管理] 检测记录管理器已初始化")
 
-    pl = PipeLine(rgb888p_size=RGB888P_SIZE, display_mode=DISPLAY_MODE)
+    pl = PipeLine(rgb888p_size=RGB888P_SIZE, display_mode=DISPLAY_MODE, enable_display=True)
     pl.create()
     display_size = pl.get_display_size()
 
@@ -123,7 +336,9 @@ def main():
     last_stats_ts = time.ticks_ms()
     last_frames = 0
     last_record_check_ts = time.ticks_ms()
+    last_status_save_ts = time.ticks_ms()
     consecutive_failures = 0
+    total_defect_stats = build_defect_stats([])
 
     web.update_runtime(stream_enabled, detection_enabled, detector.det_conf_thresh)
     print("[提示] 浏览器访问 http://{}:8080/".format(ip_address))
@@ -153,12 +368,17 @@ def main():
             if detection_enabled:
                 results = detector.run(frame)
                 detector.draw_result(results, pl.osd_img)
+                current_defect_stats = build_defect_stats(results)
                 total_detections += len(results)
+                total_defect_stats = merge_defect_stats(total_defect_stats, current_defect_stats)
+                draw_defect_summary(pl.osd_img, current_defect_stats, total_defect_stats, total_detections)
 
                 try:
                     from media.sensor import CAM_CHN_ID_0
 
                     save_img = pl.sensor.snapshot(chn=CAM_CHN_ID_0)
+                    draw_results_on_image(save_img, results)
+                    draw_defect_summary(save_img, current_defect_stats, total_defect_stats, total_detections)
                     save_detection_records(results, detection_manager, save_img, DETECTION_SAVE_THRESHOLD)
                 except Exception as e:
                     if total_detections <= 3:
@@ -170,8 +390,11 @@ def main():
 
             if stream_enabled:
                 try:
-                    stream_img = get_stream_image(pl, detection_enabled=detection_enabled, overlay_osd=True)
+                    stream_img = get_stream_image(pl, detection_enabled=False, overlay_osd=False)
                     if stream_img is not None:
+                        if detection_enabled:
+                            draw_results_on_image(stream_img, results)
+                            draw_defect_summary(stream_img, current_defect_stats, total_defect_stats, total_detections)
                         web.update_frame(stream_img)
                         if total_frames <= 3:
                             try:
@@ -213,6 +436,10 @@ def main():
             if time.ticks_diff(now, last_record_check_ts) >= RECORD_CHECK_INTERVAL_MS:
                 last_record_check_ts = now
 
+            if time.ticks_diff(now, last_status_save_ts) >= STATUS_SAVE_INTERVAL_MS:
+                last_status_save_ts = now
+                save_bolt_status(build_bolt_status(results, total_frames, total_detections, total_defect_stats))
+
             gc.collect()
 
     except KeyboardInterrupt:
@@ -227,6 +454,7 @@ def main():
         except Exception:
             pass
 
+        save_bolt_status(build_bolt_status([], total_frames, total_detections, total_defect_stats))
         web.update_runtime(stream_enabled, detection_enabled, detector.det_conf_thresh)
         print("[系统] 已清理资源，程序结束")
 

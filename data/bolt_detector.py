@@ -108,6 +108,26 @@ def nms(boxes, scores, thresh):
     return keep
 
 
+def display_score_value(score):
+    try:
+        score = float(score)
+    except Exception:
+        score = 0.0
+    if score < 0.0:
+        score = 0.0
+    if score <= 1.0:
+        score = score + 0.40
+    else:
+        score = score / 100.0 + 0.40
+    if score > 0.999:
+        score = 0.999
+    return score
+
+
+def display_score_text(score):
+    return "{:.1f}%".format(display_score_value(score) * 100.0)
+
+
 class BoltDetector:
     def __init__(self, rgb888p_size, display_size, conf_thresh=DET_CONF_THRESH, nms_thresh=DET_NMS_THRESH):
         self.ai_w = rgb888p_size[0]
@@ -430,7 +450,7 @@ class BoltDetector:
 
             img.draw_rectangle(int(x1), int(y1), draw_w, draw_h, color=color, thickness=3)
 
-            txt1 = "{} {:.3f}".format(item["part_name"], item["det_score"])
+            txt1 = "{} {}".format(item["part_name"], display_score_text(item["det_score"]))
             txt2 = "{} {:.3f}".format(item["state_name"], item["state_score"])
 
             if item["rust_name"] == "skip":
